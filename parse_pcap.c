@@ -440,8 +440,9 @@ field_t* parse_pcap_data(const unsigned char* pcap_file_data, int len,
     fwrite(pcap_file_data, len, 1, f);
     fclose(f);
 
-    char file_path[1024];
-    strcpy(file_path, temp_file_path);
+    field_t* field = parse_pcap_file(temp_file_path, wireshark_display_filter, pkt_no);
+
+    unlink(temp_file_path);
     free(temp_file_path);
-    return parse_pcap_file(file_path, wireshark_display_filter, pkt_no);
+    return field;
 }
