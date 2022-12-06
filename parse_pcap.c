@@ -1,6 +1,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <unistd.h>
+#include <time.h>
 #include "parse_pcap.h"
 #include "parse_xml.h"
 
@@ -224,7 +226,6 @@ static field_t* on_tag_open(const char* tag, char* buf, field_t* parent) {
     
     field_data_t* field_data = (field_data_t*)malloc(sizeof(field_data_t));
     memset(field_data, 0, sizeof(field_data_t));
-
     parse_line(tag, buf, field_data);
     
     if (strcmp(tag, "pdml") == 0) {
@@ -271,6 +272,38 @@ static void on_tag_close(field_t* parent) {
     return;
 }
 
+static int open_explicit_packet(const char* tag, int pkt_no, int* pkt_status) {
+    if (pkt_no < 0) {
+        return 1;
+    }
+    if (strcmp(tag, "pdml") == 0) {
+        return 1;
+    }
+
+    if (strcmp(tag, "packet") == 0) {
+        *pkt_status = *pkt_status + 1;
+    }
+
+    if (*pkt_status == pkt_no + 1) {
+        return 1;
+    }
+
+    return 0;
+}
+
+static int close_explicit_packet(const char* tag, int pkt_no, int pkt_status) {
+    if (pkt_no < 0) {
+        return 1;
+    }
+    if (strcmp(tag, "pdml") == 0) {
+        return 1;
+    }
+    if (pkt_status == pkt_no + 1) {
+        return 1;
+    }
+    return 0;
+}
+
 field_t* parse_pcap_file(const char* pcap_file_path, const char* wireshark_display_filter, int pkt_no)
 {
     char final_cmd[1024];    
@@ -293,6 +326,8 @@ field_t* parse_pcap_file(const char* pcap_file_path, const char* wireshark_displ
     memset(tag, 0, sizeof(tag));
     memset(mbuf, 0, sizeof(mbuf));
 
+    int pkt_status = 0;
+    
     while(1) {
         const char* get = fgets(buf, sizeof(buf), std);
         if (get == NULL) {
@@ -322,21 +357,27 @@ field_t* parse_pcap_file(const char* pcap_file_path, const char* wireshark_displ
             continue;
         }
 
-        printf("rbuf [%s]\n", rbuf);
-        if (is_open_tag(tag)) {
-            field_t* parent = field_stack[field_stack_index];
-            field_t* field = on_tag_open(tag, rbuf, parent);
-            if (field && !is_xml_in_one_line(rbuf)) {
-                field_stack_index += 1;
-                field_stack[field_stack_index] = field;
+        if (is_open_tag(tag)) {        
+            if (open_explicit_packet(tag, pkt_no, &pkt_status)) {
+                field_t* parent = field_stack[field_stack_index];
+                field_t* field = on_tag_open(tag, rbuf, parent);
+                if (field && !is_xml_in_one_line(rbuf)) {
+                    field_stack_index += 1;
+                    field_stack[field_stack_index] = field;
+                }
+                printf("%s\n", rbuf);
             }
             // printf("OPEN [%s] index: [%d] \n", tag, field_stack_index);
             continue;
+            
         }
         
         if (is_close_tag(tag)) {
-            on_tag_close(field_stack[field_stack_index]);
-            field_stack_index -= 1;
+            if (close_explicit_packet(tag, pkt_no, pkt_status)) {
+                on_tag_close(field_stack[field_stack_index]);
+                field_stack_index -= 1;
+                printf("%s\n", rbuf);
+            }
             // printf("CLOSE [%s] index: [%d] \n", tag, field_stack_index);
         }
     }
@@ -344,4 +385,63 @@ field_t* parse_pcap_file(const char* pcap_file_path, const char* wireshark_displ
     fclose(std);
 
     return NULL;
+}
+
+
+static char* get_temp_file(int len) {
+    char temp[1024];
+    memset(temp, 0, sizeof(temp));
+
+#ifdef _MSC_VER
+    char dll_path[MAX_PATH];
+    HMODULE hm = NULL;
+
+    if (GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | 
+                          GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                          (LPCSTR) &parse_pcap_file, &hm) == 0) {
+        int ret = GetLastError();
+        fprintf(stderr, "GetModuleHandle failed, error = %d\n", ret);
+        return NULL;
+    }
+    if (GetModuleFileName(hm, dll_path, sizeof(path)) == 0) {
+        int ret = GetLastError();
+        fprintf(stderr, "GetModuleFileName failed, error = %d\n", ret);
+        return NULL;
+    }
+    while(len--) {
+        if(dll_path[len] == '\\') {
+            dll_path[len] = '\0';
+            break;
+        }
+        if(dll_path[len] == '/') {
+            dll_path[len] = '\0';
+            break;
+        }
+    }
+    time_t t;
+    sprintf(temp, "%s\\%d.pcap", dll_path, time(&t));
+#endif
+
+#ifdef __clang__
+    time_t t;
+    char cwd[1024];
+    char* x = getcwd(cwd, sizeof(cwd));    
+    sprintf(temp, "%s/%ld_%d.pcap",x, time(&t), len);
+#endif
+
+    return strdup(temp);
+}
+
+field_t* parse_pcap_data(const unsigned char* pcap_file_data, int len,
+                         const char* wireshark_display_filter, int pkt_no) {
+
+    char* temp_file_path = get_temp_file(len);
+    FILE* f = fopen(temp_file_path, "wb");
+    fwrite(pcap_file_data, len, 1, f);
+    fclose(f);
+
+    char file_path[1024];
+    strcpy(file_path, temp_file_path);
+    free(temp_file_path);
+    return parse_pcap_file(file_path, wireshark_display_filter, pkt_no);
 }
