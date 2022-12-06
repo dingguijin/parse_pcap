@@ -1,7 +1,6 @@
 #ifndef __PARSE_PCAP_H__
 #define __PARSE_PCAP_H__
 
-
 typedef struct {
     char* name;
     int pos;
@@ -23,16 +22,16 @@ typedef struct field_struct {
     struct field_struct* next;
 } field_t;
 
-
 #ifdef __cplusplus
 extern "C" {
 #endif
 
     // pcap_file_path is pcap file absolute file path
+    // wireshark_display_filter, like "tcp.flags.syn==1 && tcp.flags.ack==1", pass to tshark after "-Y"
     // pkt_no = -1 means return all parsed packets data
     // pkt_no >= 0 means return the pkt_no indexed packet data
     // any error return NULL
-    field_t* parse_pcap_file(const char* pcap_file_path, int pkt_no);
+    field_t* parse_pcap_file(const char* pcap_file_path, const char* wireshark_display_filter, int pkt_no);
 
 
     // a convenient interface for pcap data
@@ -41,7 +40,7 @@ extern "C" {
     // pkt_no = -1 means return all parsed packets data
     // pkt_no >= 0 means return the pkt_no indexed packet data
     // any error return NULL
-    field_t* parse_pcap_data(const unsigned char* pcap_file_data, int len, int pkt_no);
+    field_t* parse_pcap_data(const unsigned char* pcap_file_data, int len, const char* wireshark_display_filter, int pkt_no);
 
 #ifdef __cplusplus
 }
