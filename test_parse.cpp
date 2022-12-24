@@ -18,15 +18,27 @@ void test_data(const char* pcap_file) {
     parse_pcap_data(pcap_data, sz, NULL, 0);
 }
 
-psml_packet_array_t* test_section(const char* pcap_file) {
-    return parse_pcap_section(pcap_file);
+void test_section(const char* pcap_file) {
+    psml_packet_array_t* array = parse_pcap_section(pcap_file);
+    printf("get array size: %d\n", array->array_size);
+    for(int i = 0; i < array->array_size; i++) {
+        printf("packet->info: [%s]\n", array->array[i]->info);
+    }
+}
+
+void test_pcap(const char* pcap_file) {
+    field_t* field = parse_pcap_file(pcap_file, NULL, -1);
+    printf("field tag[%s], size [%d]\n", field->tag, field->array_size);
+    for (int i = 0; i < field->array_size; i++) {
+        field_t* fs = field->array[i];
+        printf("field tag[%s], size[%d]\n", fs->tag, fs->array_size);
+    }
 }
 
 int main(int argc, char** argv) {
-    char pcap_file[] = "/Users/dingguijin/send_to_me.pcap";
-    // parse_pcap_file(pcap_file, NULL, -1);
+    // char pcap_file[] = "/Users/dingguijin/send_to_me.pcap";
+    char pcap_file[] = "/Users/dingguijin/projects/parser_pcap/TLS.pcapng";
     // parse_pcap_file(pcap_file, NULL, 0);
-    psml_packet_array_t* array = test_section(pcap_file);
-    printf("get array size: %d\n", array->array_size);
+    test_pcap(pcap_file);
     return 0;
 }

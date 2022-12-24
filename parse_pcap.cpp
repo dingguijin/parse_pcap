@@ -156,6 +156,12 @@ static void parse_field(attr_pair_t* attr_pair_list, field_data_t* field) {
         if (strcmp(current->attr_name, "value") == 0) {
             field->value = current->attr_value;
         }
+        if (strcmp(current->attr_name, "show") == 0) {
+            field->show = current->attr_value;
+        }
+        if (strcmp(current->attr_name, "hide") == 0) {
+            field->hide = current->attr_value;
+        }
         free(current->attr_name);
         attr_pair_t* to_free = current;
         current = current->next;
@@ -436,4 +442,38 @@ field_t* parse_pcap_data(const unsigned char* pcap_file_data, int len,
     unlink(temp_file_path);
     free(temp_file_path);
     return field;
+}
+
+void free_field_data(field_data_t* field_data) {
+    if (!field_data) {
+        return;
+    }
+
+    //    qDebug() << "name: " << field_data->name << ", showname: " << field_data->showname << ", value: " << field_data->value << ", unmaskedvalue: " << field_data->unmaskedvalue;
+    free(field_data->name);
+    free(field_data->show);
+    free(field_data->showname);
+    free(field_data->unmaskedvalue);
+    free(field_data->value);
+
+    return;
+}
+
+void recursive_free_field(field_t* field) {
+    if(field->array_size == 0) {
+//        qDebug() << field->tag << ", size: " << field->array_size;
+        free_field_data(field->field);
+        free(field->field);
+        free(field);
+        return;
+    } else {
+        for (int i = 0; i < field->array_size; i++) {
+            recursive_free_field(field->array[i]);
+        }
+        free(field->tag);
+        free(field->array);
+        free_field_data(field->field);
+        free(field);
+    }
+    return;
 }

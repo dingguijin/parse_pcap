@@ -32,6 +32,7 @@ typedef struct {
     char* value;
     int size;
     char* unmaskedvalue;
+    char* hide;
 } field_data_t;
 
 typedef struct field_struct {
