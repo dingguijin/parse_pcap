@@ -1,56 +1,19 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#if defined(__clang__) && defined(__APPLE__)
 #include <unistd.h>
+#endif
 #include <time.h>
-#include "parse_pcap.h"
-#include "parse_xml.h"
-
-static char* get_final_cmd(const char* file_path, const char* filter, char* final_cmd)
-{
-    char tshark_cmd[1024] = {0};
-#ifdef _MSC_VER
-    char dll_path[MAX_PATH];
-    HMODULE hm = NULL;
-
-    if (GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | 
-                          GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                          (LPCSTR) &parse_pcap_file, &hm) == 0) {
-        int ret = GetLastError();
-        fprintf(stderr, "GetModuleHandle failed, error = %d\n", ret);
-        return NULL;
-    }
-    if (GetModuleFileName(hm, dll_path, sizeof(path)) == 0) {
-        int ret = GetLastError();
-        fprintf(stderr, "GetModuleFileName failed, error = %d\n", ret);
-        return NULL;
-    }
-    while(len--) {
-        if(dll_path[len] == '\\') {
-            dll_path[len] = '\0';
-            break;
-        }
-        if(dll_path[len] == '/') {
-            dll_path[len] = '\0';
-            break;
-        }
-    }
-    sprintf(tshark_cmd, "%s\\tshark.exe", dll_path);
-#endif // _MSC_VER
-
-#ifdef __clang__
-    strcpy(tshark_cmd, "/Users/dingguijin/projects/wireshark/wireshark/build/run/Wireshark.app/Contents/MacOS/tshark");
+#if defined(_MSC_VER) || defined(__MINGW32__)
+#include <windows.h>
+#endif
+#if defined (__GNUC__)
+#include <unistd.h>
 #endif
 
-    // const char* cmd_args = "-Y \"tcp.flags.syn==1 && tcp.flags.ack==1\" -T pdml -V -n -r";
-    char wireshark_filter[1024] = {0};
-    const char* cmd_args = "-T pdml -Vn -r";
-    if (filter != NULL) {
-        sprintf(wireshark_filter, "-Y \"%s\"", filter);
-    }
-    sprintf(final_cmd, "%s %s %s %s", tshark_cmd, wireshark_filter, cmd_args, file_path);
-    return final_cmd;
-}
+#include "parse_pcap.h"
+#include "parse_xml.h"
 
 typedef struct attr_pair {
     char* attr_name;
@@ -146,6 +109,7 @@ static void parse_pdml(attr_pair_t* attr_pair_list, field_data_t* field) {
 }
 
 static void parse_packet(attr_pair_t* attr_pair_list, field_data_t* field) {
+    return;
 }
 
 static void parse_proto(attr_pair_t* attr_pair_list, field_data_t* field) {
@@ -170,7 +134,6 @@ static void parse_proto(attr_pair_t* attr_pair_list, field_data_t* field) {
         current = current->next;
         free(to_free);
     }
-    printf("ZZZZZZZZ PROTO [%s]\n", field->showname);
 }
 
 static void parse_field(attr_pair_t* attr_pair_list, field_data_t* field) {
@@ -198,7 +161,6 @@ static void parse_field(attr_pair_t* attr_pair_list, field_data_t* field) {
         current = current->next;
         free(to_free);
     }
-    printf("ZZZZZZZZ FIELD [%s]\n", field->showname);
 }
 
 static void parse_line(const char* tag, char* line, field_data_t* field) {
@@ -207,18 +169,22 @@ static void parse_line(const char* tag, char* line, field_data_t* field) {
         return;
     }
     if (strcmp(tag, "pdml") == 0) {
-        return parse_pdml(head, field);
+        parse_pdml(head, field);
+	return;
     }
     if (strcmp(tag, "packet") == 0) {
-        return parse_packet(head, field);
+        parse_packet(head, field);
+	return;
     }
     if (strcmp(tag, "proto") == 0) {
-        return parse_proto(head, field);
+        parse_proto(head, field);
+	return;
     }
     if (strcmp(tag, "field") == 0) {
-        return parse_field(head, field);
+        parse_field(head, field);
+	return;
     }
-    printf("unknown tag [%s] \n", tag);
+    // printf("unknown tag [%s] \n", tag);
     return;
 }
 
@@ -304,19 +270,51 @@ static int close_explicit_packet(const char* tag, int pkt_no, int pkt_status) {
     return 0;
 }
 
+static int break_explicit_packet(const char* tag, int pkt_no) {
+    if (pkt_no < 0) {
+        return 0;
+    }
+    if (strcmp(tag, "/packet") == 0) {
+        return 1;
+    }
+    return 0;
+}
+
 field_t* parse_pcap_file(const char* pcap_file_path, const char* wireshark_display_filter, int pkt_no)
 {
-    char final_cmd[1024];    
+    if (!pcap_file_path) {
+        return NULL;
+    }
+    if (strlen(pcap_file_path) == 0) {
+        return NULL;
+    }
+    char final_cmd[_MAX_PATH_LEN];
+    memset(final_cmd, 0, sizeof(final_cmd));
     if (NULL == get_final_cmd(pcap_file_path, wireshark_display_filter, final_cmd)) {
         return NULL;
     }
     
-    FILE* std = popen(final_cmd, "r");
+#if defined(__clang__) && defined (__APPLE__)
+    FILE* _std = popen(final_cmd, "r");
+#endif
+
+#if defined(_MSC_VER) || defined(__MINGW32__)
+    AllocConsole();
+    ShowWindow(GetConsoleWindow(), SW_HIDE);
+    FILE* _std = _popen(final_cmd, "r");
+#endif
+
+#if defined(__GNUC__) && defined (__linux__)
+    FILE* _std = popen(final_cmd, "r");
+#endif
+
+    int stack_healthy = 0;
     int field_stack_index = 0;
     field_t* field_stack[STACK_DEEP];
     field_t* root = (field_t*)malloc(sizeof(field_t));
     memset(root, 0, sizeof(field_t));
     memset(field_stack, 0, sizeof(field_stack));
+
     field_stack[field_stack_index] = root;
 
     char buf[LINE_LEN];
@@ -329,7 +327,7 @@ field_t* parse_pcap_file(const char* pcap_file_path, const char* wireshark_displ
     int pkt_status = 0;
     
     while(1) {
-        const char* get = fgets(buf, sizeof(buf), std);
+        const char* get = fgets(buf, sizeof(buf), _std);
         if (get == NULL) {
             break;
         }
@@ -362,10 +360,14 @@ field_t* parse_pcap_file(const char* pcap_file_path, const char* wireshark_displ
                 field_t* parent = field_stack[field_stack_index];
                 field_t* field = on_tag_open(tag, rbuf, parent);
                 if (field && !is_xml_in_one_line(rbuf)) {
-                    field_stack_index += 1;
-                    field_stack[field_stack_index] = field;
+                    if (field_stack_index + 1 < STACK_DEEP) {
+                        field_stack_index += 1;
+                        field_stack[field_stack_index] = field;
+                    } else {
+                        stack_healthy++;
+                    }
                 }
-                printf("%s\n", rbuf);
+                //printf("%s\n", rbuf);
             }
             // printf("OPEN [%s] index: [%d] \n", tag, field_stack_index);
             continue;
@@ -375,58 +377,47 @@ field_t* parse_pcap_file(const char* pcap_file_path, const char* wireshark_displ
         if (is_close_tag(tag)) {
             if (close_explicit_packet(tag, pkt_no, pkt_status)) {
                 on_tag_close(field_stack[field_stack_index]);
-                field_stack_index -= 1;
-                printf("%s\n", rbuf);
+                if (stack_healthy > 0) {
+                    stack_healthy--;
+                } else {
+                    field_stack_index -= 1;
+                }
+                if (break_explicit_packet(tag, pkt_no)) {
+                    on_tag_close(field_stack[0]);
+                    break;
+                }
+                //printf("%s\n", rbuf);
             }
             // printf("CLOSE [%s] index: [%d] \n", tag, field_stack_index);
         }
     }
-    
-    fclose(std);
 
-    return NULL;
+    fclose(_std);
+    if (root->array_size == 0) {
+	    free(root);
+	    return NULL;
+    }
+    return root;
 }
 
 
 static char* get_temp_file(int len) {
-    char temp[1024];
+    char temp[_MAX_PATH_LEN];
     memset(temp, 0, sizeof(temp));
-
-#ifdef _MSC_VER
-    char dll_path[MAX_PATH];
-    HMODULE hm = NULL;
-
-    if (GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | 
-                          GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                          (LPCSTR) &parse_pcap_file, &hm) == 0) {
-        int ret = GetLastError();
-        fprintf(stderr, "GetModuleHandle failed, error = %d\n", ret);
-        return NULL;
-    }
-    if (GetModuleFileName(hm, dll_path, sizeof(path)) == 0) {
-        int ret = GetLastError();
-        fprintf(stderr, "GetModuleFileName failed, error = %d\n", ret);
-        return NULL;
-    }
-    while(len--) {
-        if(dll_path[len] == '\\') {
-            dll_path[len] = '\0';
-            break;
-        }
-        if(dll_path[len] == '/') {
-            dll_path[len] = '\0';
-            break;
-        }
-    }
     time_t t;
-    sprintf(temp, "%s\\%d.pcap", dll_path, time(&t));
+
+#if defined(_MSC_VER) || defined(__MINGW32__)
+    char dll_path[_MAX_PATH_LEN];
+    if (!get_dll_dir(dll_path)) {
+	    return NULL;
+    }
+    sprintf(temp, "%s/%ld_%d.pcap", dll_path, (long)time(&t), len);
 #endif
 
-#ifdef __clang__
-    time_t t;
-    char cwd[1024];
+#if defined(__clang__) && defined(__APPLE__)
+    char cwd[_MAX_PATH_LEN];
     char* x = getcwd(cwd, sizeof(cwd));    
-    sprintf(temp, "%s/%ld_%d.pcap",x, time(&t), len);
+    sprintf(temp, "%s/%ld_%d.pcap", x, time(&t), len);
 #endif
 
     return strdup(temp);
