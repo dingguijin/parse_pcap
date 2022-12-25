@@ -42,6 +42,7 @@ typedef struct field_struct {
     char* tag;
 
 // not for customer, internal use only
+    struct field_struct* head;
     struct field_struct* current;
     struct field_struct* next;
 } field_t;

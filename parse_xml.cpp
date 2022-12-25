@@ -188,6 +188,7 @@ int is_xml_in_one_line(const char* line) {
 }
 
 char* remove_spaces(char* line) {
+    char* to_free = strdup(line);
     char* new_line = strdup(line);
     int len = strlen(new_line);
     int i = 0;
@@ -199,19 +200,19 @@ char* remove_spaces(char* line) {
             break;
         }
     }
-    strcpy(line, &new_line[i]);
-    free(new_line);
-
-    len = strlen(line);
+    strcpy(to_free, &new_line[i]);
+    strcpy(new_line, to_free);
+    len = strlen(new_line);
     for (i = len; i > 0; i--) {
-        if (is_general_space(line[i])) {
-            line[i] = '\0';
+        if (is_general_space(new_line[i])) {
+            new_line[i] = '\0';
             continue;
         } else {
             break;
         }
     }
-    return line;
+    free(to_free);
+    return new_line;
 }
 
 char* escape_xml_string(char* str) {

@@ -6,6 +6,7 @@
 #define STACK_DEEP 128
 #define _MAX_PATH_LEN 4096
 
+extern char* get_dll_dir(char*);
 extern char* get_final_cmd(const char*, const char*, char*);
 extern char* get_psml_final_cmd(const char*, char*);
 extern char* remove_spaces(char*);

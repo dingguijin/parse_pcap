@@ -1,19 +1,16 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-#if defined(__clang__) && defined(__APPLE__)
-#include <unistd.h>
-#endif
 #include <time.h>
+
 #if defined(_MSC_VER) || defined(__MINGW32__)
 #include <windows.h>
-#endif
-#if defined (__GNUC__)
-#include <unistd.h>
+#include <qdebug.h>
 #endif
 
 #include "parse_pcap.h"
 #include "parse_xml.h"
+
 
 typedef struct attr_pair {
     char* attr_name;
@@ -28,9 +25,8 @@ static attr_pair_t* get_attr_pair(char* line) {
     int len = strlen(line);
     int status = 0;
     int j = 0;
-    char attr_name[256];
-    char attr_value[256* 1024];
-    
+    char* attr_name = (char*)malloc(LINE_LEN);
+    char* attr_value = (char*)malloc(LINE_LEN);
     for (int i = 0; i < len; i++) {
         if (line[i] == ' ' && status == 0) {
             j = 0;
@@ -79,6 +75,8 @@ static attr_pair_t* get_attr_pair(char* line) {
             continue;
         }        
     }
+    free(attr_name);
+    free(attr_value);
     return head;
 }
 
@@ -176,19 +174,19 @@ static void parse_line(const char* tag, char* line, field_data_t* field) {
     }
     if (strcmp(tag, "pdml") == 0) {
         parse_pdml(head, field);
-	return;
+        return;
     }
     if (strcmp(tag, "packet") == 0) {
         parse_packet(head, field);
-	return;
+        return;
     }
     if (strcmp(tag, "proto") == 0) {
         parse_proto(head, field);
-	return;
+        return;
     }
     if (strcmp(tag, "field") == 0) {
         parse_field(head, field);
-	return;
+        return;
     }
     // printf("unknown tag [%s] \n", tag);
     return;
@@ -215,27 +213,24 @@ static field_t* on_tag_open(const char* tag, char* buf, field_t* parent) {
 
     if (parent->current) {
         parent->current->next = field;
-    } else {
-        parent->array = (field_t**)field;
-    }    
+    }
+
+    if (!parent->head) {
+        parent->head = field;
+    }
+
     parent->current = field;
     parent->array_size++;
     return field;
 }
 
 static void on_tag_close(field_t* parent) {
-    if (!parent->array) {
-        return;
-    }
     if (!parent->array_size) {
         return;
     }
-
-    field_t* head = (field_t*) parent->array;
+    field_t* head = parent->head;
     field_t* current = head;
     int i = 0;
-
-    //printf("array size [%d] \n", parent->array_size);
     parent->array = (field_t**)malloc(sizeof(field_t*)* parent->array_size);
     while(current) {
         parent->array[i++] = current;
@@ -286,6 +281,40 @@ static int break_explicit_packet(const char* tag, int pkt_no) {
     return 0;
 }
 
+char* read_cmd_file(FILE* _std, char** _buf, int* _size) {
+    char *buf = (char*) malloc(LINE_LEN);
+    char *total_buf = NULL;
+    int total_size = 0;
+    *_size = 0;
+    *_buf = NULL;
+
+    while(1) {
+        memset(buf, 0, LINE_LEN);
+        size_t r = fread(buf, 1, LINE_LEN, _std);
+        if (r == 0) {
+            break;
+        }
+        char* tmp = (char* )malloc(total_size + r);
+        if (total_size && total_buf) {
+            memcpy(tmp, total_buf, total_size);
+            memcpy(&tmp[total_size], buf, r);
+            total_size += r;
+            free(total_buf);
+            total_buf = tmp;
+        } else {
+            total_buf = tmp;
+            memcpy(tmp, buf, r);
+            total_size = r;
+        }
+
+        //qDebug() <<"[" << total_size << "]" << "[" << total_buf[total_size-1] <<"]";
+    }
+    free(buf);
+    *_buf = total_buf;
+    *_size = total_size;
+    return total_buf;
+}
+
 field_t* parse_pcap_file(const char* pcap_file_path, const char* wireshark_display_filter, int pkt_no)
 {
     if (!pcap_file_path) {
@@ -300,19 +329,19 @@ field_t* parse_pcap_file(const char* pcap_file_path, const char* wireshark_displ
         return NULL;
     }
     
-#if defined(__clang__) && defined (__APPLE__)
-    FILE* _std = popen(final_cmd, "r");
-#endif
-
 #if defined(_MSC_VER) || defined(__MINGW32__)
     AllocConsole();
     ShowWindow(GetConsoleWindow(), SW_HIDE);
-    FILE* _std = _popen(final_cmd, "r");
+    FILE* _std = popen(final_cmd, "rb");
 #endif
 
-#if defined(__GNUC__) && defined (__linux__)
-    FILE* _std = popen(final_cmd, "r");
-#endif
+    char* total_buf = NULL;
+    int total_size = 0;
+    total_buf = read_cmd_file(_std, &total_buf, &total_size);
+    fclose(_std);
+    if (total_size == 0) {
+        return NULL;
+    }
 
     int stack_healthy = 0;
     int field_stack_index = 0;
@@ -322,50 +351,58 @@ field_t* parse_pcap_file(const char* pcap_file_path, const char* wireshark_displ
     memset(field_stack, 0, sizeof(field_stack));
 
     field_stack[field_stack_index] = root;
-
-    char buf[LINE_LEN];
-    char mbuf[LINE_LEN];
     char tag[TAG_LEN];
-
-    memset(tag, 0, sizeof(tag));
-    memset(mbuf, 0, sizeof(mbuf));
-
     int pkt_status = 0;
-    
-    while(1) {
-        const char* get = fgets(buf, sizeof(buf), _std);
-        if (get == NULL) {
-            break;
-        }
-        
-        if (strlen(buf) == 0) {
-            continue;
-        }
 
-        char* rbuf = remove_spaces(buf);
-        if (strlen(rbuf) == 0) {
+    total_buf[total_size-1] = '\0';
+    char* tofree = strdup(total_buf);
+    char* token = NULL;
+
+
+    int j = 0;
+    int new_line = 0;
+    char* mbuf = (char*)malloc(LINE_LEN*16);
+    memset(mbuf, 0, LINE_LEN*16);
+    for(token = strtok(total_buf, "\n"); token; token=strtok(NULL, "\n")) {
+        j++;
+        if (strlen(token) == 0) {
+            continue;
+        }
+        char* buf = remove_spaces(token);
+        if (strlen(buf) == 0) {
+            free(buf);
             continue;
         }
         
-        if (need_next_line(rbuf)) {
-            strcat(mbuf, rbuf);
+        if (need_next_line(buf)) {
+            buf[strlen(buf) - 1] = '\0';
+            strcat(mbuf, buf);
+            new_line = 1;
+            free(buf);
             continue;
+        } else {
+            if (new_line == 1) {
+                new_line = 0;
+                strcat(mbuf, buf);
+            } else {
+                strcpy(mbuf, buf);
+            }
+            free(buf);
         }
-        strcat(mbuf, rbuf);
-        strcpy(rbuf, mbuf);
-        mbuf[0] = '\0';
-        
-        memset(tag, 0, sizeof(tag));
-        get_tag(rbuf, tag);
+        // qDebug() << "[" << mbuf << "]";
+
+        memset(tag, 0, TAG_LEN);
+        get_tag(mbuf, tag);
         if (!is_accept_tag(tag)) {
             continue;
         }
+        // qDebug() << "[" << tag << "]" << "[" << j++ << "]";
 
-        if (is_open_tag(tag)) {        
+        if (is_open_tag(tag)) {
             if (open_explicit_packet(tag, pkt_no, &pkt_status)) {
                 field_t* parent = field_stack[field_stack_index];
-                field_t* field = on_tag_open(tag, rbuf, parent);
-                if (field && !is_xml_in_one_line(rbuf)) {
+                field_t* field = on_tag_open(tag, mbuf, parent);
+                if (field && !is_xml_in_one_line(mbuf)) {
                     if (field_stack_index + 1 < STACK_DEEP) {
                         field_stack_index += 1;
                         field_stack[field_stack_index] = field;
@@ -373,13 +410,9 @@ field_t* parse_pcap_file(const char* pcap_file_path, const char* wireshark_displ
                         stack_healthy++;
                     }
                 }
-                //printf("%s\n", rbuf);
             }
-            // printf("OPEN [%s] index: [%d] \n", tag, field_stack_index);
-            continue;
-            
         }
-        
+
         if (is_close_tag(tag)) {
             if (close_explicit_packet(tag, pkt_no, pkt_status)) {
                 on_tag_close(field_stack[field_stack_index]);
@@ -392,13 +425,17 @@ field_t* parse_pcap_file(const char* pcap_file_path, const char* wireshark_displ
                     on_tag_close(field_stack[0]);
                     break;
                 }
-                //printf("%s\n", rbuf);
             }
-            // printf("CLOSE [%s] index: [%d] \n", tag, field_stack_index);
         }
-    }
 
-    fclose(_std);
+        //printf("tag: [%s], stack_field_index = [%d], stack_healthy = [%d]\n", tag, field_stack_index, stack_healthy);
+        memset(mbuf, 0, LINE_LEN*16);
+    }
+    qDebug() << "EOF [" << j << "]";
+
+    free(mbuf);
+    free(tofree);
+
     if (root->array_size == 0) {
 	    free(root);
 	    return NULL;
